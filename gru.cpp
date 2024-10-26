@@ -275,6 +275,34 @@ class GRUCell {
     size_t input_size;
     size_t hidden_size;
 
+    // Add gradient storage
+    struct GRUGradients {
+        Matrix dW_z, dU_z, db_z;  // Update gate gradients
+        Matrix dW_r, dU_r, db_r;  // Reset gate gradients
+        Matrix dW_h, dU_h, db_h;  // Hidden state gradients
+        
+        GRUGradients(size_t input_size, size_t hidden_size)
+            : dW_z(hidden_size, input_size), dU_z(hidden_size, hidden_size), db_z(hidden_size, 1),
+              dW_r(hidden_size, input_size), dU_r(hidden_size, hidden_size), db_r(hidden_size, 1),
+              dW_h(hidden_size, input_size), dU_h(hidden_size, hidden_size), db_h(hidden_size, 1) {}
+    };
+
+    // Store sequence of states for BPTT
+    struct TimeStep {
+        Matrix z, r, h_candidate, h;
+        Matrix h_prev;
+        Matrix x;
+        
+        TimeStep(size_t hidden_size, size_t input_size) 
+            : z(hidden_size, 1),
+              r(hidden_size, 1),
+              h_candidate(hidden_size, 1),
+              h(hidden_size, 1),
+              h_prev(hidden_size, 1),
+              x(input_size, 1) {}
+    };
+    std::vector<TimeStep> time_steps;
+
    public:
     GRUCell(size_t input_size, size_t hidden_size)
         : input_size(input_size),
@@ -302,21 +330,30 @@ class GRUCell {
         b_h.zero_initialise();
     }
 
-    Matrix forward(const Matrix &x, const Matrix &h_prev) {
-        // Update gate: determines how much of the past information to keep
-        Matrix z = (W_z * x + U_z * h_prev + b_z).apply(sigmoid);
+    // Modified forward pass to store states
+    Matrix forward(const Matrix& x, const Matrix& h_prev, bool store_states = true) {
+        TimeStep step(hidden_size, input_size);
+        step.x = x;
+        step.h_prev = h_prev;
 
-        // Reset gate: determines how much of the past information to forget
-        Matrix r = (W_r * x + U_r * h_prev + b_r).apply(sigmoid);
+        // Update gate
+        step.z = (W_z * x + U_z * h_prev + b_z).apply(sigmoid);
 
-        // Candidate hidden state: combines current input with filtered past information
-        Matrix h_candidate = (W_h * x + U_h * (r.hadamard(h_prev)) + b_h).apply(tanh);
+        // Reset gate
+        step.r = (W_r * x + U_r * h_prev + b_r).apply(sigmoid);
 
-        // Final hidden state: weighted sum of previous hidden state and candidate hidden state
-        Matrix h = z.hadamard(h_prev) + (z.apply([](double x) { return 1.0 - x; }).hadamard(h_candidate));
+        // Candidate hidden state
+        step.h_candidate = (W_h * x + U_h * (step.r.hadamard(h_prev)) + b_h).apply(tanh);
 
-        return h;
+        // Final hidden state
+        step.h = step.z.hadamard(h_prev) + 
+                (step.z.apply([](double x) { return 1.0 - x; }).hadamard(step.h_candidate));
+
+        if (store_states) {
+            time_steps.push_back(step);
+        }
+
+        return step.h;
     }
 };
-
 
