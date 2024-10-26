@@ -13,11 +13,6 @@ double sigmoid_derivative(double x) {
     return s * (1.0 - s);
 }
 
-// Add this with your other activation functions
-double tanh(double x) {
-    return std::tanh(x);
-}
-
 // matrix class for handling matrix operations
 class Matrix {
    public:
@@ -255,6 +250,22 @@ class Matrix {
 
         return result;
     }
+
+    friend std::ostream& operator<<(std::ostream& os, const Matrix& matrix) {
+        os << "[";
+        for (size_t i = 0; i < matrix.rows; ++i) {
+            if (i > 0) os << " ";
+            os << "[";
+            for (size_t j = 0; j < matrix.cols; ++j) {
+                os << matrix.data[i][j];
+                if (j < matrix.cols - 1) os << ", ";
+            }
+            os << "]";
+            if (i < matrix.rows - 1) os << "\n";
+        }
+        os << "]";
+        return os;
+    }
 };
 
 class GRUCell {
@@ -303,6 +314,9 @@ class GRUCell {
     };
     std::vector<TimeStep> time_steps;
 
+    // Add learning rate as a member variable
+    double learning_rate;
+
    public:
     GRUCell(size_t input_size, size_t hidden_size)
         : input_size(input_size),
@@ -343,7 +357,7 @@ class GRUCell {
         step.r = (W_r * x + U_r * h_prev + b_r).apply(sigmoid);
 
         // Candidate hidden state
-        step.h_candidate = (W_h * x + U_h * (step.r.hadamard(h_prev)) + b_h).apply(tanh);
+        step.h_candidate = (W_h * x + U_h * (step.r.hadamard(h_prev)) + b_h).apply(std::tanh);
 
         // Final hidden state
         step.h = step.z.hadamard(h_prev) + 
@@ -355,5 +369,41 @@ class GRUCell {
 
         return step.h;
     }
+
+    void reset_gradients(GRUGradients& grads) {
+        grads.dW_z.zero_initialise(); grads.dU_z.zero_initialise(); grads.db_z.zero_initialise();
+        grads.dW_r.zero_initialise(); grads.dU_r.zero_initialise(); grads.db_r.zero_initialise();
+        grads.dW_h.zero_initialise(); grads.dU_h.zero_initialise(); grads.db_h.zero_initialise();
+    }
+
+    // essentially just a basic SGD update -- will implement optimiser classes later
+    void basic_update_parameters(const GRUGradients& grads) {
+        // Update weights and biases using gradients
+        W_z = W_z - grads.dW_z * learning_rate;
+        U_z = U_z - grads.dU_z * learning_rate;
+        b_z = b_z - grads.db_z * learning_rate;
+        
+        W_r = W_r - grads.dW_r * learning_rate;
+        U_r = U_r - grads.dU_r * learning_rate;
+        b_r = b_r - grads.db_r * learning_rate;
+        
+        W_h = W_h - grads.dW_h * learning_rate;
+        U_h = U_h - grads.dU_h * learning_rate;
+        b_h = b_h - grads.db_h * learning_rate;
+    }
 };
 
+
+int main() {
+    GRUCell gru(10, 10);
+    Matrix input(10, 1);
+    Matrix hidden(10, 1);
+    std::cout << "input: " << input << std::endl;
+    std::cout << "hidden: " << hidden << std::endl;
+    input.uniform_initialise();
+    hidden.uniform_initialise();
+
+    auto next_hidden = gru.forward(input, hidden);
+    std::cout << "next_hidden: " << next_hidden << std::endl;
+    return 0;
+}
