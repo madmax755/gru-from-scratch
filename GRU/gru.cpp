@@ -618,6 +618,68 @@ class AdamOptimiser : public Optimiser {
     }
 };
 
+class AdamWOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+    double beta1;
+    double beta2;
+    double epsilon;
+    double weight_decay;
+    int t;
+    GRUGradients m;
+    GRUGradients v;
+
+    void update_parameter(Matrix& param, Matrix& m_param, Matrix& v_param, const Matrix& grad, bool apply_weight_decay = true) {
+        // Weight decay should be applied to the parameter directly
+        if (apply_weight_decay) {
+            param = param * (1.0 - learning_rate*weight_decay);
+        }
+        
+        // Update biased first moment estimate
+        m_param = m_param * beta1 + grad * (1.0 - beta1);
+        
+        // Update biased second raw moment estimate
+        v_param = v_param * beta2 + grad.hadamard(grad) * (1.0 - beta2);
+        
+        // Compute bias-corrected first moment estimate
+        Matrix m_hat = m_param * (1.0 / (1.0 - std::pow(beta1, t)));
+        
+        // Compute bias-corrected second raw moment estimate
+        Matrix v_hat = v_param * (1.0 / (1.0 - std::pow(beta2, t)));
+        
+        // Update parameters
+        Matrix denom = v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); });
+        Matrix update = m_hat.hadamard(denom);
+        param = param - update * learning_rate;
+    }
+
+   public:
+    AdamWOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8, double wd = 0.01)
+        : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), weight_decay(wd), t(0), m(0, 0), v(0, 0) {}
+
+    void compute_and_apply_updates(GRUCell& gru, const GRUGradients& grads) override {
+        if (m.dW_z.rows == 0) {
+            m = GRUGradients(gru.input_size, gru.hidden_size);
+            v = GRUGradients(gru.input_size, gru.hidden_size);
+        }
+
+        t++;
+
+        // Update weights (with weight decay)
+        update_parameter(gru.W_z, m.dW_z, v.dW_z, grads.dW_z, true);
+        update_parameter(gru.U_z, m.dU_z, v.dU_z, grads.dU_z, true);
+        update_parameter(gru.W_r, m.dW_r, v.dW_r, grads.dW_r, true);
+        update_parameter(gru.U_r, m.dU_r, v.dU_r, grads.dU_r, true);
+        update_parameter(gru.W_h, m.dW_h, v.dW_h, grads.dW_h, true);
+        update_parameter(gru.U_h, m.dU_h, v.dU_h, grads.dU_h, true);
+
+        // Update biases (without weight decay)
+        update_parameter(gru.b_z, m.db_z, v.db_z, grads.db_z, false);
+        update_parameter(gru.b_r, m.db_r, v.db_r, grads.db_r, false);
+        update_parameter(gru.b_h, m.db_h, v.db_h, grads.db_h, false);
+    }
+};
+
 class Predictor {
    private:
     GRUCell gru;
@@ -750,7 +812,7 @@ int main() {
     
     // learning rate is for the linear layer, not the optimiser.
     Predictor predictor(input_features, hidden_size, output_size, 0.01);
-    predictor.set_optimiser(std::make_unique<AdamOptimiser>());
+    predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
 
     // generate training data
     auto training_data = generate_sine_training_data(1000, 20);
