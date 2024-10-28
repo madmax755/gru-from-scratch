@@ -4,6 +4,7 @@
 #include <random>
 #include <stdexcept>
 #include <vector>
+#include <algorithm>
 
 // sigmoid activation function
 double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
@@ -288,7 +289,6 @@ struct GRUGradients {
 
 class GRUCell {
    private:
-    double learning_rate;
 
     // store sequence of states for BPTT
     struct TimeStep {
@@ -405,8 +405,7 @@ class GRUCell {
           b_r(hidden_size, 1),
           W_h(hidden_size, input_size),
           U_h(hidden_size, hidden_size),
-          b_h(hidden_size, 1),
-          learning_rate(0.01) {  // add this
+          b_h(hidden_size, 1){
         // initialize weights using Xavier initialization
         W_z.xavier_initialize();
         U_z.xavier_initialize();
@@ -565,6 +564,60 @@ class SGDMomentumOptimiser : public Optimiser {
     }
 };
 
+class AdamOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+    double beta1;
+    double beta2;
+    double epsilon;
+    int t;
+    GRUGradients m;
+    GRUGradients v;
+
+    void update_parameter(Matrix& param, Matrix& m_param, Matrix& v_param, const Matrix& grad) {
+        // Update biased first moment estimate
+        m_param = m_param * beta1 + grad * (1.0 - beta1);
+        
+        // Update biased second raw moment estimate
+        v_param = v_param * beta2 + grad.hadamard(grad) * (1.0 - beta2);
+        
+        // Compute bias-corrected first moment estimate
+        Matrix m_hat = m_param * (1.0 / (1.0 - std::pow(beta1, t)));
+        
+        // Compute bias-corrected second raw moment estimate
+        Matrix v_hat = v_param * (1.0 / (1.0 - std::pow(beta2, t)));
+        
+        // Update parameters
+        Matrix denom = v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); });
+        Matrix update = m_hat.hadamard(denom);
+        param = param - update * learning_rate;
+    }
+
+   public:
+    AdamOptimiser(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8)
+        : learning_rate(lr), beta1(b1), beta2(b2), epsilon(eps), t(0), m(0, 0), v(0, 0) {}
+
+    void compute_and_apply_updates(GRUCell& gru, const GRUGradients& grads) override {
+        if (m.dW_z.rows == 0) {
+            m = GRUGradients(gru.input_size, gru.hidden_size);
+            v = GRUGradients(gru.input_size, gru.hidden_size);
+        }
+
+        t++;
+
+        // Update all parameters
+        update_parameter(gru.W_z, m.dW_z, v.dW_z, grads.dW_z);
+        update_parameter(gru.U_z, m.dU_z, v.dU_z, grads.dU_z);
+        update_parameter(gru.b_z, m.db_z, v.db_z, grads.db_z);
+        update_parameter(gru.W_r, m.dW_r, v.dW_r, grads.dW_r);
+        update_parameter(gru.U_r, m.dU_r, v.dU_r, grads.dU_r);
+        update_parameter(gru.b_r, m.db_r, v.db_r, grads.db_r);
+        update_parameter(gru.W_h, m.dW_h, v.dW_h, grads.dW_h);
+        update_parameter(gru.U_h, m.dU_h, v.dU_h, grads.dU_h);
+        update_parameter(gru.b_h, m.db_h, v.db_h, grads.db_h);
+    }
+};
+
 class Predictor {
    private:
     GRUCell gru;
@@ -694,12 +747,14 @@ int main() {
     size_t input_features = 1;  // just the sine value
     size_t hidden_size = 16;
     size_t output_size = 1;  // predicted next value
-
+    
+    // learning rate is for the linear layer, not the optimiser.
     Predictor predictor(input_features, hidden_size, output_size, 0.01);
-    predictor.set_optimiser(std::make_unique<SGDMomentumOptimiser>(0.01, 0.9));
+    predictor.set_optimiser(std::make_unique<AdamOptimiser>());
 
     // generate training data
-    auto training_data = generate_sine_training_data(1000, 10);
+    auto training_data = generate_sine_training_data(1000, 20);
+    std::shuffle(training_data.begin(), training_data.end(), std::mt19937(std::random_device()()));
 
     // training loop
     int epochs = 100;
@@ -721,6 +776,6 @@ int main() {
     auto test_data = generate_sine_training_data(10, 10);
     for (const auto& example : test_data) {
         Matrix prediction = predictor.predict(example.sequence);
-        std::cout << "Predicted: " << prediction.data[0][0] << " Actual: " << example.target.data[0][0] << std::endl;
+        std::cout << "Predicted: " << prediction << " Actual: " << example.target << std::endl;
     }
 }
