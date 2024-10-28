@@ -1,5 +1,6 @@
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <stdexcept>
 #include <vector>
@@ -267,42 +268,27 @@ class Matrix {
     }
 };
 
+// gradient storage struct for GRUCell -- defined globally to avoid circular dependency
+struct GRUGradients {
+    Matrix dW_z, dU_z, db_z;  // update gate gradients
+    Matrix dW_r, dU_r, db_r;  // reset gate gradients
+    Matrix dW_h, dU_h, db_h;  // hidden state gradients
+
+    GRUGradients(size_t input_size, size_t hidden_size)
+        : dW_z(hidden_size, input_size),
+          dU_z(hidden_size, hidden_size),
+          db_z(hidden_size, 1),
+          dW_r(hidden_size, input_size),
+          dU_r(hidden_size, hidden_size),
+          db_r(hidden_size, 1),
+          dW_h(hidden_size, input_size),
+          dU_h(hidden_size, hidden_size),
+          db_h(hidden_size, 1) {}
+};
+
 class GRUCell {
    private:
-    // gate weights and biases
-    Matrix W_z;  // update gate weights for input
-    Matrix U_z;  // update gate weights for hidden state
-    Matrix b_z;  // update gate bias
-
-    Matrix W_r;  // reset gate weights for input
-    Matrix U_r;  // reset gate weights for hidden state
-    Matrix b_r;  // reset gate bias
-
-    Matrix W_h;  // candidate hidden state weights for input
-    Matrix U_h;  // candidate hidden state weights for hidden state
-    Matrix b_h;  // candidate hidden state bias
-
-    size_t input_size;
-    size_t hidden_size;
     double learning_rate;
-
-    // gradient storage
-    struct GRUGradients {
-        Matrix dW_z, dU_z, db_z;  // update gate gradients
-        Matrix dW_r, dU_r, db_r;  // reset gate gradients
-        Matrix dW_h, dU_h, db_h;  // hidden state gradients
-
-        GRUGradients(size_t input_size, size_t hidden_size)
-            : dW_z(hidden_size, input_size),
-              dU_z(hidden_size, hidden_size),
-              db_z(hidden_size, 1),
-              dW_r(hidden_size, input_size),
-              dU_r(hidden_size, hidden_size),
-              db_r(hidden_size, 1),
-              dW_h(hidden_size, input_size),
-              dU_h(hidden_size, hidden_size),
-              db_h(hidden_size, 1) {}
-    };
 
     // store sequence of states for BPTT
     struct TimeStep {
@@ -392,6 +378,22 @@ class GRUCell {
     }
 
    public:
+    // gate weights and biases
+    Matrix W_z;  // update gate weights for input
+    Matrix U_z;  // update gate weights for hidden state
+    Matrix b_z;  // update gate bias
+
+    Matrix W_r;  // reset gate weights for input
+    Matrix U_r;  // reset gate weights for hidden state
+    Matrix b_r;  // reset gate bias
+
+    Matrix W_h;  // candidate hidden state weights for input
+    Matrix U_h;  // candidate hidden state weights for hidden state
+    Matrix b_h;  // candidate hidden state bias
+
+    size_t input_size;
+    size_t hidden_size;
+
     GRUCell(size_t input_size, size_t hidden_size)
         : input_size(input_size),
           hidden_size(hidden_size),
@@ -488,21 +490,78 @@ class GRUCell {
         clear_states();
         return accumulated_grads;
     }
+};
 
-    // essentially just a basic SGD update -- will implement optimiser classes later
-    void basic_update_parameters(const GRUGradients& grads) {
+class Optimiser {
+   public:
+    virtual void compute_and_apply_updates(GRUCell& gru, const GRUGradients& gradients) = 0;
+    virtual ~Optimiser() = default;
+};
+
+class SGDOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+
+   public:
+    SGDOptimiser(double lr = 0.1) : learning_rate(lr) {}
+
+    void compute_and_apply_updates(GRUCell& gru, const GRUGradients& grads) override {
         // update weights and biases using gradients
-        W_z = W_z - grads.dW_z * learning_rate;
-        U_z = U_z - grads.dU_z * learning_rate;
-        b_z = b_z - grads.db_z * learning_rate;
+        gru.W_z = gru.W_z - grads.dW_z * learning_rate;
+        gru.U_z = gru.U_z - grads.dU_z * learning_rate;
+        gru.b_z = gru.b_z - grads.db_z * learning_rate;
 
-        W_r = W_r - grads.dW_r * learning_rate;
-        U_r = U_r - grads.dU_r * learning_rate;
-        b_r = b_r - grads.db_r * learning_rate;
+        gru.W_r = gru.W_r - grads.dW_r * learning_rate;
+        gru.U_r = gru.U_r - grads.dU_r * learning_rate;
+        gru.b_r = gru.b_r - grads.db_r * learning_rate;
 
-        W_h = W_h - grads.dW_h * learning_rate;
-        U_h = U_h - grads.dU_h * learning_rate;
-        b_h = b_h - grads.db_h * learning_rate;
+        gru.W_h = gru.W_h - grads.dW_h * learning_rate;
+        gru.U_h = gru.U_h - grads.dU_h * learning_rate;
+        gru.b_h = gru.b_h - grads.db_h * learning_rate;
+    }
+};
+
+class SGDMomentumOptimiser : public Optimiser {
+   private:
+    double learning_rate;
+    double momentum;
+    GRUGradients velocity;
+
+   public:
+    SGDMomentumOptimiser(double lr = 0.1, double mom = 0.9)
+        : learning_rate(lr), momentum(mom), velocity(0, 0) {}  // sizes will be set on first use
+
+    void compute_and_apply_updates(GRUCell& gru, const GRUGradients& grads) override {
+        // initialize velocity if needed
+        if (velocity.dW_z.rows == 0) {
+            velocity = GRUGradients(gru.input_size, gru.hidden_size);
+        }
+
+        // update velocities and apply updates for each parameter
+        velocity.dW_z = velocity.dW_z * momentum - grads.dW_z * learning_rate;
+        velocity.dU_z = velocity.dU_z * momentum - grads.dU_z * learning_rate;
+        velocity.db_z = velocity.db_z * momentum - grads.db_z * learning_rate;
+
+        velocity.dW_r = velocity.dW_r * momentum - grads.dW_r * learning_rate;
+        velocity.dU_r = velocity.dU_r * momentum - grads.dU_r * learning_rate;
+        velocity.db_r = velocity.db_r * momentum - grads.db_r * learning_rate;
+
+        velocity.dW_h = velocity.dW_h * momentum - grads.dW_h * learning_rate;
+        velocity.dU_h = velocity.dU_h * momentum - grads.dU_h * learning_rate;
+        velocity.db_h = velocity.db_h * momentum - grads.db_h * learning_rate;
+
+        // apply updates
+        gru.W_z = gru.W_z + velocity.dW_z;
+        gru.U_z = gru.U_z + velocity.dU_z;
+        gru.b_z = gru.b_z + velocity.db_z;
+
+        gru.W_r = gru.W_r + velocity.dW_r;
+        gru.U_r = gru.U_r + velocity.dU_r;
+        gru.b_r = gru.b_r + velocity.db_r;
+
+        gru.W_h = gru.W_h + velocity.dW_h;
+        gru.U_h = gru.U_h + velocity.dU_h;
+        gru.b_h = gru.b_h + velocity.db_h;
     }
 };
 
@@ -517,6 +576,8 @@ class Predictor {
     size_t hidden_size;
     size_t output_size;
 
+    std::unique_ptr<Optimiser> optimiser;
+
    public:
     Predictor(size_t input_size, size_t hidden_size, size_t output_size, double learning_rate = 0.01)
         : gru(input_size, hidden_size),
@@ -527,6 +588,17 @@ class Predictor {
           W_out(output_size, hidden_size),
           b_out(output_size, 1) {
         W_out.xavier_initialize();
+    }
+
+    // set optimiser - call before training
+    void set_optimiser(std::unique_ptr<Optimiser> new_optimiser) { optimiser = std::move(new_optimiser); }
+
+    // update GRU parameters using optimiser (can't be defined in GRUCell to avoid circular dependency)
+    void update_parameters(const GRUGradients& grads) {
+        if (!optimiser) {
+            throw std::runtime_error("no optimiser set");
+        }
+        optimiser->compute_and_apply_updates(gru, grads);
     }
 
     // process sequence and return prediction
@@ -548,7 +620,7 @@ class Predictor {
         Matrix prediction = predict(input_sequence);
         Matrix last_hidden_state = gru.get_last_hidden_state();  // store before backprop clears states
 
-        // compute prediction error and loss 
+        // compute prediction error and loss
         // TODO: REPLACE WITH LOSS CLASSES AS IN nn.cpp
         Matrix error = prediction - target;
         double loss = 0.0;
@@ -566,8 +638,8 @@ class Predictor {
         // backpropagate through GRU and update its parameters
         auto gru_gradients = gru.backpropagate(hidden_gradient);
 
-        // TODO: REPLACE WITH OPTIMISER CLASSES
-        gru.basic_update_parameters(gru_gradients);
+        // update GRU parameters using optimiser
+        update_parameters(gru_gradients);
 
         // update output layer weights
         // TODO: REPLACE WITH OPTIMISER CLASSES
@@ -624,6 +696,7 @@ int main() {
     size_t output_size = 1;  // predicted next value
 
     Predictor predictor(input_features, hidden_size, output_size, 0.01);
+    predictor.set_optimiser(std::make_unique<SGDMomentumOptimiser>(0.01, 0.9));
 
     // generate training data
     auto training_data = generate_sine_training_data(1000, 10);
