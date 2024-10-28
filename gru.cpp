@@ -13,7 +13,6 @@ double sigmoid_derivative(double x) {
     return s * (1.0 - s);
 }
 
-// matrix class for handling matrix operations
 class Matrix {
    public:
     std::vector<std::vector<double>> data;  // 2D vector to store matrix data
@@ -36,8 +35,8 @@ class Matrix {
         std::random_device rd;                            // obtain a random number from hardware
         std::mt19937 gen(rd());                           // seed the generator
         std::uniform_real_distribution<> dis(-1.0, 1.0);  // define the range
-        for (auto &row : data) {
-            for (auto &elem : row) {
+        for (auto& row : data) {
+            for (auto& elem : row) {
                 elem = dis(gen);  // generate random number
             }
         }
@@ -47,8 +46,8 @@ class Matrix {
      * @brief Initializes the matrix with zeros.
      */
     void zero_initialise() {
-        for (auto &row : data) {
-            for (auto &elem : row) {
+        for (auto& row : data) {
+            for (auto& elem : row) {
                 elem = 0;  // generate random number
             }
         }
@@ -63,8 +62,8 @@ class Matrix {
         std::mt19937 gen(rd());
         double limit = sqrt(6.0 / (rows + cols));
         std::uniform_real_distribution<> dis(-limit, limit);
-        for (auto &row : data) {
-            for (auto &elem : row) {
+        for (auto& row : data) {
+            for (auto& elem : row) {
                 elem = dis(gen);
             }
         }
@@ -79,8 +78,8 @@ class Matrix {
         std::mt19937 gen(rd());
         double std_dev = sqrt(2.0 / cols);
         std::normal_distribution<> dis(0, std_dev);
-        for (auto &row : data) {
-            for (auto &elem : row) {
+        for (auto& row : data) {
+            for (auto& elem : row) {
                 elem = dis(gen);
             }
         }
@@ -91,7 +90,7 @@ class Matrix {
      * @param other The matrix to multiply with.
      * @return The resulting matrix after multiplication.
      */
-    Matrix operator*(const Matrix &other) const {
+    Matrix operator*(const Matrix& other) const {
         if (cols != other.rows) {
             std::cerr << "Attempted to multiply matrices of incompatible dimensions: "
                       << "(" << rows << "x" << cols << ") * (" << other.rows << "x" << other.cols << ")" << std::endl;
@@ -114,7 +113,7 @@ class Matrix {
      * @param other The matrix to add.
      * @return The resulting matrix after addition.
      */
-    Matrix operator+(const Matrix &other) const {
+    Matrix operator+(const Matrix& other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for addition");
         }
@@ -132,7 +131,7 @@ class Matrix {
      * @param other The matrix to subtract.
      * @return The resulting matrix after subtraction.
      */
-    Matrix operator-(const Matrix &other) const {
+    Matrix operator-(const Matrix& other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for subtraction");
         }
@@ -179,7 +178,7 @@ class Matrix {
      * @param other The matrix to perform Hadamard product with.
      * @return The resulting matrix after Hadamard product.
      */
-    Matrix hadamard(const Matrix &other) const {
+    Matrix hadamard(const Matrix& other) const {
         if (rows != other.rows or cols != other.cols) {
             throw std::invalid_argument("Matrix dimensions don't match for Hadamard product");
         }
@@ -270,41 +269,48 @@ class Matrix {
 
 class GRUCell {
    private:
-    // Gate weights and biases
-    Matrix W_z;  // Update gate weights for input
-    Matrix U_z;  // Update gate weights for hidden state
-    Matrix b_z;  // Update gate bias
+    // gate weights and biases
+    Matrix W_z;  // update gate weights for input
+    Matrix U_z;  // update gate weights for hidden state
+    Matrix b_z;  // update gate bias
 
-    Matrix W_r;  // Reset gate weights for input
-    Matrix U_r;  // Reset gate weights for hidden state
-    Matrix b_r;  // Reset gate bias
+    Matrix W_r;  // reset gate weights for input
+    Matrix U_r;  // reset gate weights for hidden state
+    Matrix b_r;  // reset gate bias
 
-    Matrix W_h;  // Candidate hidden state weights for input
-    Matrix U_h;  // Candidate hidden state weights for hidden state
-    Matrix b_h;  // Candidate hidden state bias
+    Matrix W_h;  // candidate hidden state weights for input
+    Matrix U_h;  // candidate hidden state weights for hidden state
+    Matrix b_h;  // candidate hidden state bias
 
     size_t input_size;
     size_t hidden_size;
+    double learning_rate;
 
-    // Add gradient storage
+    // gradient storage
     struct GRUGradients {
-        Matrix dW_z, dU_z, db_z;  // Update gate gradients
-        Matrix dW_r, dU_r, db_r;  // Reset gate gradients
-        Matrix dW_h, dU_h, db_h;  // Hidden state gradients
-        
+        Matrix dW_z, dU_z, db_z;  // update gate gradients
+        Matrix dW_r, dU_r, db_r;  // reset gate gradients
+        Matrix dW_h, dU_h, db_h;  // hidden state gradients
+
         GRUGradients(size_t input_size, size_t hidden_size)
-            : dW_z(hidden_size, input_size), dU_z(hidden_size, hidden_size), db_z(hidden_size, 1),
-              dW_r(hidden_size, input_size), dU_r(hidden_size, hidden_size), db_r(hidden_size, 1),
-              dW_h(hidden_size, input_size), dU_h(hidden_size, hidden_size), db_h(hidden_size, 1) {}
+            : dW_z(hidden_size, input_size),
+              dU_z(hidden_size, hidden_size),
+              db_z(hidden_size, 1),
+              dW_r(hidden_size, input_size),
+              dU_r(hidden_size, hidden_size),
+              db_r(hidden_size, 1),
+              dW_h(hidden_size, input_size),
+              dU_h(hidden_size, hidden_size),
+              db_h(hidden_size, 1) {}
     };
 
-    // Store sequence of states for BPTT
+    // store sequence of states for BPTT
     struct TimeStep {
         Matrix z, r, h_candidate, h;
         Matrix h_prev;
         Matrix x;
-        
-        TimeStep(size_t hidden_size, size_t input_size) 
+
+        TimeStep(size_t hidden_size, size_t input_size)
             : z(hidden_size, 1),
               r(hidden_size, 1),
               h_candidate(hidden_size, 1),
@@ -314,8 +320,76 @@ class GRUCell {
     };
     std::vector<TimeStep> time_steps;
 
-    // Add learning rate as a member variable
-    double learning_rate;
+    // clear the stored states
+    void clear_states() { time_steps.clear(); }
+
+    // store the gradients and the gradient of the hidden state from the previous timestep
+    struct BackwardResult {
+        GRUGradients grads;
+        Matrix dh_prev;
+
+        BackwardResult(GRUGradients g, Matrix h) : grads(g), dh_prev(h) {}
+    };
+
+    // compute gradients for a single timestep
+    BackwardResult backward(const Matrix& delta_h_t, size_t t) {
+        if (t >= time_steps.size()) {
+            throw std::runtime_error("Time step index out of bounds");
+        }
+
+        // get the stored states for this timestep
+        const TimeStep& step = time_steps[t];
+
+        // initialize gradients for this timestep
+        GRUGradients timestep_grads(input_size, hidden_size);
+
+        // 1. Hidden state gradients
+        Matrix one_matrix(delta_h_t.rows, delta_h_t.cols);
+        one_matrix.zero_initialise();
+        for (size_t i = 0; i < one_matrix.rows; i++)
+            for (size_t j = 0; j < one_matrix.cols; j++) one_matrix.data[i][j] = 1.0;
+
+        Matrix dh_tilde = delta_h_t.hadamard(one_matrix - step.z);
+        Matrix dz = delta_h_t.hadamard(step.h_prev - step.h_candidate);
+
+        // 2. Candidate state gradients
+        Matrix dg = dh_tilde.hadamard(step.h_candidate.apply([](double x) { return 1.0 - x * x; })  // tanh derivative
+        );
+
+        timestep_grads.dW_h = dg * step.x.transpose();
+        timestep_grads.dU_h = dg * (step.r.hadamard(step.h_prev)).transpose();
+        timestep_grads.db_h = dg;
+
+        Matrix dx_t = timestep_grads.dW_h.transpose() * dg;
+        Matrix dr = (timestep_grads.dU_h.transpose() * dg).hadamard(step.h_prev);
+        Matrix dh_prev = (timestep_grads.dU_h.transpose() * dg).hadamard(step.r);
+
+        // 3. Reset gate gradients
+        Matrix dr_total = dr.hadamard(step.r.apply(sigmoid_derivative));
+
+        timestep_grads.dW_r = dr_total * step.x.transpose();
+        timestep_grads.dU_r = dr_total * step.h_prev.transpose();
+        timestep_grads.db_r = dr_total;
+
+        dx_t = dx_t + timestep_grads.dW_r.transpose() * dr_total;
+        dh_prev = dh_prev + timestep_grads.dU_r.transpose() * dr_total;
+
+        // 4. Update gate gradients
+        Matrix dz_total = dz.hadamard(step.z.apply(sigmoid_derivative));
+
+        timestep_grads.dW_z = dz_total * step.x.transpose();
+        timestep_grads.dU_z = dz_total * step.h_prev.transpose();
+        timestep_grads.db_z = dz_total;
+
+        dx_t = dx_t + timestep_grads.dW_z.transpose() * dz_total;
+        dh_prev = dh_prev + timestep_grads.dU_z.transpose() * dz_total;
+
+        // 5. Final hidden state contribution
+        dh_prev = dh_prev + delta_h_t.hadamard(step.z);
+
+        // return both values
+        return BackwardResult(timestep_grads, dh_prev);
+    }
 
    public:
     GRUCell(size_t input_size, size_t hidden_size)
@@ -329,8 +403,9 @@ class GRUCell {
           b_r(hidden_size, 1),
           W_h(hidden_size, input_size),
           U_h(hidden_size, hidden_size),
-          b_h(hidden_size, 1) {
-        // Initialize weights using Xavier initialization
+          b_h(hidden_size, 1),
+          learning_rate(0.01) {  // add this
+        // initialize weights using Xavier initialization
         W_z.xavier_initialize();
         U_z.xavier_initialize();
         W_r.xavier_initialize();
@@ -338,72 +413,241 @@ class GRUCell {
         W_h.xavier_initialize();
         U_h.xavier_initialize();
 
-        // Initialize biases with zeros
-        b_z.zero_initialise();
-        b_r.zero_initialise();
-        b_h.zero_initialise();
+        // biases are initialised to zero by default
     }
 
-    // Modified forward pass to store states
-    Matrix forward(const Matrix& x, const Matrix& h_prev, bool store_states = true) {
+    // get final hidden state
+    Matrix get_last_hidden_state() const {
+        if (time_steps.empty()) {
+            throw std::runtime_error("No hidden state available - run forward pass first");
+        }
+        return time_steps.back().h;
+    }
+
+    // resets gradients in GRUGradients struct to zero
+    void reset_gradients(GRUGradients& grads) {
+        grads.dW_z.zero_initialise();
+        grads.dU_z.zero_initialise();
+        grads.db_z.zero_initialise();
+        grads.dW_r.zero_initialise();
+        grads.dU_r.zero_initialise();
+        grads.db_r.zero_initialise();
+        grads.dW_h.zero_initialise();
+        grads.dU_h.zero_initialise();
+        grads.db_h.zero_initialise();
+    }
+
+    // forward pass that stores states
+    Matrix forward(const Matrix& x, const Matrix& h_prev) {
         TimeStep step(hidden_size, input_size);
         step.x = x;
         step.h_prev = h_prev;
 
-        // Update gate
+        // update gate
         step.z = (W_z * x + U_z * h_prev + b_z).apply(sigmoid);
 
-        // Reset gate
+        // reset gate
         step.r = (W_r * x + U_r * h_prev + b_r).apply(sigmoid);
 
-        // Candidate hidden state
+        // candidate hidden state
         step.h_candidate = (W_h * x + U_h * (step.r.hadamard(h_prev)) + b_h).apply(std::tanh);
 
-        // Final hidden state
-        step.h = step.z.hadamard(h_prev) + 
-                (step.z.apply([](double x) { return 1.0 - x; }).hadamard(step.h_candidate));
+        // final hidden state
+        step.h = step.z.hadamard(h_prev) + (step.z.apply([](double x) { return 1.0 - x; }).hadamard(step.h_candidate));
 
-        if (store_states) {
-            time_steps.push_back(step);
-        }
-
+        time_steps.push_back(step);
         return step.h;
     }
 
-    void reset_gradients(GRUGradients& grads) {
-        grads.dW_z.zero_initialise(); grads.dU_z.zero_initialise(); grads.db_z.zero_initialise();
-        grads.dW_r.zero_initialise(); grads.dU_r.zero_initialise(); grads.db_r.zero_initialise();
-        grads.dW_h.zero_initialise(); grads.dU_h.zero_initialise(); grads.db_h.zero_initialise();
+    GRUGradients backpropagate(const Matrix& final_gradient) {
+        Matrix dh_next = final_gradient;
+        GRUGradients accumulated_grads(input_size, hidden_size);
+        reset_gradients(accumulated_grads);
+
+        // backpropagate through time
+        for (int t = time_steps.size() - 1; t >= 0; --t) {
+            BackwardResult result = backward(dh_next, t);
+            dh_next = result.dh_prev;
+
+            // accumulate gradients for update gate
+            accumulated_grads.dW_z = accumulated_grads.dW_z + result.grads.dW_z;
+            accumulated_grads.dU_z = accumulated_grads.dU_z + result.grads.dU_z;
+            accumulated_grads.db_z = accumulated_grads.db_z + result.grads.db_z;
+
+            // accumulate gradients for reset gate
+            accumulated_grads.dW_r = accumulated_grads.dW_r + result.grads.dW_r;
+            accumulated_grads.dU_r = accumulated_grads.dU_r + result.grads.dU_r;
+            accumulated_grads.db_r = accumulated_grads.db_r + result.grads.db_r;
+
+            // accumulate gradients for candidate hidden state
+            accumulated_grads.dW_h = accumulated_grads.dW_h + result.grads.dW_h;
+            accumulated_grads.dU_h = accumulated_grads.dU_h + result.grads.dU_h;
+            accumulated_grads.db_h = accumulated_grads.db_h + result.grads.db_h;
+        }
+
+        clear_states();
+        return accumulated_grads;
     }
 
     // essentially just a basic SGD update -- will implement optimiser classes later
     void basic_update_parameters(const GRUGradients& grads) {
-        // Update weights and biases using gradients
+        // update weights and biases using gradients
         W_z = W_z - grads.dW_z * learning_rate;
         U_z = U_z - grads.dU_z * learning_rate;
         b_z = b_z - grads.db_z * learning_rate;
-        
+
         W_r = W_r - grads.dW_r * learning_rate;
         U_r = U_r - grads.dU_r * learning_rate;
         b_r = b_r - grads.db_r * learning_rate;
-        
+
         W_h = W_h - grads.dW_h * learning_rate;
         U_h = U_h - grads.dU_h * learning_rate;
         b_h = b_h - grads.db_h * learning_rate;
     }
 };
 
+class Predictor {
+   private:
+    GRUCell gru;
+    Matrix W_out;  // output layer weights
+    Matrix b_out;  // output layer bias
+    double learning_rate;
+
+    size_t input_size;
+    size_t hidden_size;
+    size_t output_size;
+
+   public:
+    Predictor(size_t input_size, size_t hidden_size, size_t output_size, double learning_rate = 0.01)
+        : gru(input_size, hidden_size),
+          input_size(input_size),
+          hidden_size(hidden_size),
+          output_size(output_size),
+          learning_rate(learning_rate),
+          W_out(output_size, hidden_size),
+          b_out(output_size, 1) {
+        W_out.xavier_initialize();
+    }
+
+    // process sequence and return prediction
+    Matrix predict(const std::vector<Matrix>& input_sequence) {
+        Matrix h_t(hidden_size, 1);
+
+        // process sequence through GRU
+        for (const auto& x : input_sequence) {
+            h_t = gru.forward(x, h_t);
+        }
+
+        // final linear layer
+        return W_out * h_t + b_out;
+    }
+
+    // training step
+    double train_step(const std::vector<Matrix>& input_sequence, const Matrix& target) {
+        // forward pass
+        Matrix prediction = predict(input_sequence);
+        Matrix last_hidden_state = gru.get_last_hidden_state();  // store before backprop clears states
+
+        // compute prediction error and loss 
+        // TODO: REPLACE WITH LOSS CLASSES AS IN nn.cpp
+        Matrix error = prediction - target;
+        double loss = 0.0;
+        for (size_t i = 0; i < error.rows; i++) {
+            for (size_t j = 0; j < error.cols; j++) {
+                loss += error.data[i][j] * error.data[i][j];
+            }
+        }
+        loss /= (error.rows * error.cols);
+
+        // backpropagate through output layer
+        Matrix output_gradient = error * (2.0 / (error.rows * error.cols));  // MSE derivative
+        Matrix hidden_gradient = W_out.transpose() * output_gradient;
+
+        // backpropagate through GRU and update its parameters
+        auto gru_gradients = gru.backpropagate(hidden_gradient);
+
+        // TODO: REPLACE WITH OPTIMISER CLASSES
+        gru.basic_update_parameters(gru_gradients);
+
+        // update output layer weights
+        // TODO: REPLACE WITH OPTIMISER CLASSES
+        W_out = W_out - (output_gradient * last_hidden_state.transpose()) * learning_rate;
+        b_out = b_out - output_gradient * learning_rate;
+
+        return loss;
+    }
+};
+
+struct TrainingExample {
+    std::vector<Matrix> sequence;
+    Matrix target;
+
+    TrainingExample() : target(1, 1) {}  // initialize target with size 1x1 as matrix does not have default constructor
+};
+
+std::vector<TrainingExample> generate_sine_training_data(int num_samples, int sequence_length, double sampling_frequency = 0.1) {
+    std::vector<TrainingExample> training_data;
+
+    // generate a longer sine wave
+    std::vector<double> sine_wave;
+    for (int i = 0; i < num_samples + sequence_length; i++) {
+        double x = i * sampling_frequency;
+        sine_wave.push_back(std::sin(x));
+    }
+
+    // create sliding window examples
+    for (int i = 0; i < num_samples; i++) {
+        TrainingExample example;
+
+        // create input sequence
+        for (int j = 0; j < sequence_length; j++) {
+            Matrix input(1, 1);  // single feature (sine value)
+            input.data[0][0] = sine_wave[i + j];
+            example.sequence.push_back(input);
+        }
+
+        // create target (next value in sequence)
+        Matrix target(1, 1);
+        target.data[0][0] = sine_wave[i + sequence_length];
+        example.target = target;
+
+        training_data.push_back(example);
+    }
+
+    return training_data;
+}
 
 int main() {
-    GRUCell gru(10, 10);
-    Matrix input(10, 1);
-    Matrix hidden(10, 1);
-    std::cout << "input: " << input << std::endl;
-    std::cout << "hidden: " << hidden << std::endl;
-    input.uniform_initialise();
-    hidden.uniform_initialise();
+    // setup for sine wave prediction
+    size_t input_features = 1;  // just the sine value
+    size_t hidden_size = 16;
+    size_t output_size = 1;  // predicted next value
 
-    auto next_hidden = gru.forward(input, hidden);
-    std::cout << "next_hidden: " << next_hidden << std::endl;
-    return 0;
+    Predictor predictor(input_features, hidden_size, output_size, 0.01);
+
+    // generate training data
+    auto training_data = generate_sine_training_data(1000, 10);
+
+    // training loop
+    int epochs = 100;
+    for (int epoch = 0; epoch < epochs; epoch++) {
+        double epoch_loss = 0.0;
+
+        for (const auto& example : training_data) {
+            double loss = predictor.train_step(example.sequence, example.target);
+            epoch_loss += loss;
+        }
+
+        epoch_loss /= training_data.size();
+        if (epoch % 10 == 0) {
+            std::cout << "Epoch " << epoch << " loss: " << epoch_loss << std::endl;
+        }
+    }
+
+    // test prediction
+    auto test_data = generate_sine_training_data(10, 10);
+    for (const auto& example : test_data) {
+        Matrix prediction = predictor.predict(example.sequence);
+        std::cout << "Predicted: " << prediction.data[0][0] << " Actual: " << example.target.data[0][0] << std::endl;
+    }
 }
