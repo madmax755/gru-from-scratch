@@ -1,10 +1,13 @@
+#include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
-#include <algorithm>
 
 // sigmoid activation function
 double sigmoid(double x) { return 1.0 / (1.0 + std::exp(-x)); }
@@ -289,7 +292,6 @@ struct GRUGradients {
 
 class GRUCell {
    private:
-
     // store sequence of states for BPTT
     struct TimeStep {
         Matrix z, r, h_candidate, h;
@@ -405,7 +407,7 @@ class GRUCell {
           b_r(hidden_size, 1),
           W_h(hidden_size, input_size),
           U_h(hidden_size, hidden_size),
-          b_h(hidden_size, 1){
+          b_h(hidden_size, 1) {
         // initialize weights using Xavier initialization
         W_z.xavier_initialize();
         U_z.xavier_initialize();
@@ -577,16 +579,16 @@ class AdamOptimiser : public Optimiser {
     void update_parameter(Matrix& param, Matrix& m_param, Matrix& v_param, const Matrix& grad) {
         // Update biased first moment estimate
         m_param = m_param * beta1 + grad * (1.0 - beta1);
-        
+
         // Update biased second raw moment estimate
         v_param = v_param * beta2 + grad.hadamard(grad) * (1.0 - beta2);
-        
+
         // Compute bias-corrected first moment estimate
         Matrix m_hat = m_param * (1.0 / (1.0 - std::pow(beta1, t)));
-        
+
         // Compute bias-corrected second raw moment estimate
         Matrix v_hat = v_param * (1.0 / (1.0 - std::pow(beta2, t)));
-        
+
         // Update parameters
         Matrix denom = v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); });
         Matrix update = m_hat.hadamard(denom);
@@ -632,21 +634,21 @@ class AdamWOptimiser : public Optimiser {
     void update_parameter(Matrix& param, Matrix& m_param, Matrix& v_param, const Matrix& grad, bool apply_weight_decay = true) {
         // Weight decay should be applied to the parameter directly
         if (apply_weight_decay) {
-            param = param * (1.0 - learning_rate*weight_decay);
+            param = param * (1.0 - learning_rate * weight_decay);
         }
-        
+
         // Update biased first moment estimate
         m_param = m_param * beta1 + grad * (1.0 - beta1);
-        
+
         // Update biased second raw moment estimate
         v_param = v_param * beta2 + grad.hadamard(grad) * (1.0 - beta2);
-        
+
         // Compute bias-corrected first moment estimate
         Matrix m_hat = m_param * (1.0 / (1.0 - std::pow(beta1, t)));
-        
+
         // Compute bias-corrected second raw moment estimate
         Matrix v_hat = v_param * (1.0 / (1.0 - std::pow(beta2, t)));
-        
+
         // Update parameters
         Matrix denom = v_hat.apply([this](double x) { return 1.0 / (std::sqrt(x) + epsilon); });
         Matrix update = m_hat.hadamard(denom);
@@ -804,18 +806,110 @@ std::vector<TrainingExample> generate_sine_training_data(int num_samples, int se
     return training_data;
 }
 
+std::vector<TrainingExample> load_stock_data(const std::string& filename, size_t sequence_length = 20) {
+    std::vector<TrainingExample> training_data;
+    std::ifstream file(filename);
+    std::string line;
+    
+    if (!file.is_open()) {
+        throw std::runtime_error("failed to open file: " + filename);
+    }
+    
+    // skip header if exists
+    std::getline(file, line);
+    
+    // read first line to infer number of features
+    std::getline(file, line);
+    std::stringstream test_ss(line);
+    std::string value;
+    size_t n_features = 0;
+    
+    // skip date
+    std::getline(test_ss, value, ',');
+    
+    // count remaining columns
+    while (std::getline(test_ss, value, ',')) {
+        n_features++;
+    }
+    
+    // reset file position to start (after header)
+    file.clear();
+    file.seekg(0);
+    std::getline(file, line);  // skip header again
+    
+    // temporary storage for building sequences
+    std::vector<std::vector<double>> temp_sequence;
+    
+    // read each line
+    while (std::getline(file, line)) {
+        std::stringstream ss(line);
+        
+        // skip date
+        std::getline(ss, value, ',');
+        
+        // read features
+        std::vector<double> features;
+        while (std::getline(ss, value, ',') && features.size() < n_features) {
+            try {
+                features.push_back(std::stod(value));
+            } catch (const std::invalid_argument& e) {
+                std::cerr << "warning: invalid number format in line: " << line << std::endl;
+                continue;
+            }
+        }
+        
+        // ensure we got all features
+        if (features.size() != n_features) {
+            std::cerr << "warning: incorrect number of features in line: " << line << std::endl;
+            continue;
+        }
+        
+        temp_sequence.push_back(features);
+        
+        // once we have enough data for a sequence
+        if (temp_sequence.size() >= sequence_length + 1) {  // +1 for target
+            TrainingExample example;
+            
+            // create sequence from all but last entry
+            for (size_t i = 0; i < sequence_length; i++) {
+                Matrix input(n_features, 1);
+                for (size_t f = 0; f < n_features; f++) {
+                    input.data[f][0] = temp_sequence[i][f];
+                }
+                example.sequence.push_back(input);
+            }
+            
+            // use returns from last entry as target
+            example.target = Matrix(1, 1);
+            example.target.data[0][0] = temp_sequence[sequence_length][0];  // returns column
+            
+            training_data.push_back(example);
+            
+            // remove oldest entry to slide window
+            temp_sequence.erase(temp_sequence.begin());
+        }
+    }
+    
+    if (training_data.empty()) {
+        throw std::runtime_error("no valid training examples could be created from file");
+    }
+    
+    return training_data;
+}
+
 int main() {
     // setup for sine wave prediction
-    size_t input_features = 1;  // just the sine value
-    size_t hidden_size = 16;
+    size_t input_features = 8;  // just the sine value
+    size_t hidden_size = 32;
     size_t output_size = 1;  // predicted next value
-    
+
     // learning rate is for the linear layer, not the optimiser.
     Predictor predictor(input_features, hidden_size, output_size, 0.01);
     predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
 
     // generate training data
-    auto training_data = generate_sine_training_data(1000, 20);
+    auto training_data = load_stock_data("stock_data/AAPL_data.csv", 20);
+    // todo normalise data
     std::shuffle(training_data.begin(), training_data.end(), std::mt19937(std::random_device()()));
 
     // training loop
@@ -835,7 +929,7 @@ int main() {
     }
 
     // test prediction
-    auto test_data = generate_sine_training_data(10, 10);
+    auto test_data = generate_sine_training_data(10, 20);
     for (const auto& example : test_data) {
         Matrix prediction = predictor.predict(example.sequence);
         std::cout << "Predicted: " << prediction << " Actual: " << example.target << std::endl;
