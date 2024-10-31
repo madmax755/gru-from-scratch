@@ -272,11 +272,22 @@ class Matrix {
     }
 };
 
+
+
+struct TrainingExample {
+    std::vector<Matrix> sequence;
+    Matrix target;
+
+    TrainingExample() : target(1, 1) {}  // initialize target with size 1x1 as matrix does not have default constructor
+};
+
 // gradient storage struct for GRUCell -- defined globally to avoid circular dependency
 struct GRUGradients {
     Matrix dW_z, dU_z, db_z;  // update gate gradients
     Matrix dW_r, dU_r, db_r;  // reset gate gradients
     Matrix dW_h, dU_h, db_h;  // hidden state gradients
+    size_t input_size;
+    size_t hidden_size;
 
     GRUGradients(size_t input_size, size_t hidden_size)
         : dW_z(hidden_size, input_size),
@@ -287,7 +298,42 @@ struct GRUGradients {
           db_r(hidden_size, 1),
           dW_h(hidden_size, input_size),
           dU_h(hidden_size, hidden_size),
-          db_h(hidden_size, 1) {}
+          db_h(hidden_size, 1),
+          input_size(input_size),
+          hidden_size(hidden_size) {}
+    
+    // operator overloading for addition
+    GRUGradients operator+(const GRUGradients& other) const {
+        if (input_size != other.input_size or hidden_size != other.hidden_size) {
+            throw std::invalid_argument("GRUGradients dimensions don't match for addition");
+        }
+        GRUGradients result(input_size, hidden_size);
+        result.dW_z = dW_z + other.dW_z;
+        result.dU_z = dU_z + other.dU_z;
+        result.db_z = db_z + other.db_z;
+        result.dW_r = dW_r + other.dW_r;
+        result.dU_r = dU_r + other.dU_r;
+        result.db_r = db_r + other.db_r;
+        result.dW_h = dW_h + other.dW_h;
+        result.dU_h = dU_h + other.dU_h;
+        result.db_h = db_h + other.db_h;
+        return result;
+    }
+
+    // operator overloading for scalar multiplication
+    GRUGradients operator*(double scalar) const {
+        GRUGradients result(input_size, hidden_size);
+        result.dW_z = dW_z * scalar;
+        result.dU_z = dU_z * scalar;
+        result.db_z = db_z * scalar;
+        result.dW_r = dW_r * scalar;
+        result.dU_r = dU_r * scalar;
+        result.db_r = db_r * scalar;
+        result.dW_h = dW_h * scalar;
+        result.dU_h = dU_h * scalar;
+        result.db_h = db_h * scalar;
+        return result;
+    }
 };
 
 class GRUCell {
@@ -731,48 +777,127 @@ class Predictor {
         return W_out * h_t + b_out;
     }
 
-    // training step
-    double train_step(const std::vector<Matrix>& input_sequence, const Matrix& target) {
+    // gets the gradients for a single training example
+    std::pair<GRUGradients, std::pair<Matrix, Matrix>> compute_gradients(const std::vector<Matrix>& input_sequence, const Matrix& target) {
         // forward pass
         Matrix prediction = predict(input_sequence);
-        Matrix last_hidden_state = gru.get_last_hidden_state();  // store before backprop clears states
+        Matrix last_hidden_state = gru.get_last_hidden_state();
 
-        // compute prediction error and loss
-        // TODO: REPLACE WITH LOSS CLASSES AS IN nn.cpp
+        // compute prediction error
         Matrix error = prediction - target;
-        double loss = 0.0;
-        for (size_t i = 0; i < error.rows; i++) {
-            for (size_t j = 0; j < error.cols; j++) {
-                loss += error.data[i][j] * error.data[i][j];
-            }
-        }
-        loss /= (error.rows * error.cols);
 
         // backpropagate through output layer
         Matrix output_gradient = error * (2.0 / (error.rows * error.cols));  // MSE derivative
         Matrix hidden_gradient = W_out.transpose() * output_gradient;
 
-        // backpropagate through GRU and update its parameters
+        // compute complete gradients for output layer
+        Matrix dW_out = output_gradient * last_hidden_state.transpose();
+        Matrix db_out = output_gradient;
+
+        // backpropagate through GRU
         auto gru_gradients = gru.backpropagate(hidden_gradient);
+        return std::pair<GRUGradients, std::pair<Matrix, Matrix>>(gru_gradients, {dW_out, db_out});
+    }
 
-        // update GRU parameters using optimiser
-        update_parameters(gru_gradients);
+    void train(const std::vector<TrainingExample>& training_data, const std::vector<TrainingExample>& test_data, int epochs, int batch_size = 1) {
+        // training loop
+        for (int epoch = 0; epoch < epochs; epoch++) {
 
-        // update output layer weights
-        // TODO: REPLACE WITH OPTIMISER CLASSES
-        W_out = W_out - (output_gradient * last_hidden_state.transpose()) * learning_rate;
-        b_out = b_out - output_gradient * learning_rate;
+            int no_examples = training_data.size();
 
-        return loss;
+            for (int i=0; i<no_examples; i+=batch_size) {
+                // create batch
+                size_t batch_start = i;
+                size_t batch_end = std::min(i + batch_size, no_examples);
+                std::vector<TrainingExample> batch(training_data.begin() + batch_start, training_data.begin() + batch_end);
+
+                std::vector<GRUGradients> accumulated_gru_gradients;
+                std::vector<Matrix> accumulated_output_weights_gradients;
+                std::vector<Matrix> accumulated_output_bias_gradients;
+                accumulated_gru_gradients.reserve(batch_end - batch_start);
+                accumulated_output_weights_gradients.reserve(batch_end - batch_start);
+                accumulated_output_bias_gradients.reserve(batch_end - batch_start);
+
+                for (const auto& example : batch) {
+                    auto [gru_gradients, output_gradients] = compute_gradients(example.sequence, example.target);
+                    auto [dW_out, db_out] = output_gradients;
+                    accumulated_gru_gradients.push_back(gru_gradients);
+                    accumulated_output_weights_gradients.push_back(dW_out);
+                    accumulated_output_bias_gradients.push_back(db_out);
+                }
+
+                // average gradients
+                GRUGradients averaged_gru_gradients(input_size, hidden_size);
+                Matrix averaged_output_weights_gradients(output_size, hidden_size);
+                Matrix averaged_output_bias_gradients(1, output_size);
+                for (int i=0; i<batch_end - batch_start; i++) {
+                    averaged_gru_gradients = averaged_gru_gradients + accumulated_gru_gradients[i];
+                    averaged_output_weights_gradients = averaged_output_weights_gradients + accumulated_output_weights_gradients[i];
+                    averaged_output_bias_gradients = averaged_output_bias_gradients + accumulated_output_bias_gradients[i];
+                }
+                averaged_gru_gradients = averaged_gru_gradients * (1.0 / (batch_end - batch_start));
+                averaged_output_weights_gradients = averaged_output_weights_gradients * (1.0 / (batch_end - batch_start));
+                averaged_output_bias_gradients = averaged_output_bias_gradients * (1.0 / (batch_end - batch_start));
+
+
+                // update GRU parameters using optimiser once batch gradients are averaged
+                update_parameters(averaged_gru_gradients);
+
+                // update output layer weights
+                // TODO: REPLACE WITH OPTIMISER CLASSES
+                W_out = W_out - averaged_output_weights_gradients * learning_rate;
+                b_out = b_out - averaged_output_bias_gradients * learning_rate;
+
+                std::cout << "\rBatch " << i/batch_size << "/" << no_examples/batch_size << " complete" << std::flush;
+            }
+            std::cout << "\rEpoch " << epoch << "/" << epochs << " complete" << std::endl;
+            auto test_metrics = evaluate(test_data);
+            std::cout << test_metrics << std::endl;
+        }
+    }
+
+    // add this to your Predictor class
+    struct EvaluationMetrics {
+        double mse;
+        double mae;
+        double rmse;
+
+        friend std::ostream& operator<<(std::ostream& os, const EvaluationMetrics& metrics) {
+            os << "----------------\n"
+               << "MSE: " << metrics.mse << "\n"
+               << "MAE: " << metrics.mae << "\n"
+               << "RMSE: " << metrics.rmse << "\n"
+               << "----------------";
+            return os;
+        }
+    };
+
+    EvaluationMetrics evaluate(const std::vector<TrainingExample>& test_data) {
+        double total_loss = 0.0;
+        double total_squared_error = 0.0;
+        double total_absolute_error = 0.0;
+        size_t total_examples = test_data.size();
+
+        for (const auto& example : test_data) {
+            // get prediction
+            Matrix prediction = predict(example.sequence);
+            
+            // compute errors
+            double error = prediction.data[0][0] - example.target.data[0][0];
+            total_squared_error += error * error;
+            total_absolute_error += std::abs(error);
+            total_loss += error * error;  // MSE loss
+        }
+
+        // compute average metrics
+        double mse = total_squared_error / total_examples;
+        double mae = total_absolute_error / total_examples;
+        double rmse = std::sqrt(mse);
+
+        return {mse, mae, rmse};
     }
 };
 
-struct TrainingExample {
-    std::vector<Matrix> sequence;
-    Matrix target;
-
-    TrainingExample() : target(1, 1) {}  // initialize target with size 1x1 as matrix does not have default constructor
-};
 
 std::vector<TrainingExample> generate_sine_training_data(int num_samples, int sequence_length, double sampling_frequency = 0.1) {
     std::vector<TrainingExample> training_data;
@@ -908,30 +1033,22 @@ int main() {
     predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
 
     // generate training data
-    auto training_data = load_stock_data("stock_data/AAPL_data.csv", 20);
+    auto stock_data = load_stock_data("stock_data/AAPL_data.csv", 30);
     // todo normalise data
-    std::shuffle(training_data.begin(), training_data.end(), std::mt19937(std::random_device()()));
+    std::shuffle(stock_data.begin(), stock_data.end(), std::mt19937(std::random_device()()));
 
-    // training loop
-    int epochs = 100;
-    for (int epoch = 0; epoch < epochs; epoch++) {
-        double epoch_loss = 0.0;
+    // split data into training and test sets
+    size_t split_point = static_cast<size_t>(stock_data.size() * 0.8);
+    auto training_data = std::vector<TrainingExample>(stock_data.begin(), stock_data.begin() + split_point);
+    auto test_data = std::vector<TrainingExample>(stock_data.begin() + split_point, stock_data.end());
 
-        for (const auto& example : training_data) {
-            double loss = predictor.train_step(example.sequence, example.target);
-            epoch_loss += loss;
-        }
+    predictor.train(training_data, test_data, 50, 50);
 
-        epoch_loss /= training_data.size();
-        if (epoch % 10 == 0) {
-            std::cout << "Epoch " << epoch << " loss: " << epoch_loss << std::endl;
-        }
-    }
-
-    // test prediction
-    auto test_data = generate_sine_training_data(10, 20);
-    for (const auto& example : test_data) {
-        Matrix prediction = predictor.predict(example.sequence);
-        std::cout << "Predicted: " << prediction << " Actual: " << example.target << std::endl;
+    // print some example predictions
+    std::cout << "\nSample predictions:" << std::endl;
+    for (size_t i = 0; i < std::min(size_t(10), test_data.size()); i++) {
+        Matrix prediction = predictor.predict(test_data[i].sequence);
+        std::cout << "Predicted: " << prediction.data[0][0] 
+                  << " Actual: " << test_data[i].target.data[0][0] << std::endl;
     }
 }
