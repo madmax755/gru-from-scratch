@@ -800,16 +800,21 @@ class Predictor {
     }
 
     void train(const std::vector<TrainingExample>& training_data, const std::vector<TrainingExample>& test_data, int epochs, int batch_size = 1) {
-        // training loop
+
+        // create a vector of indices
+        std::vector<size_t> indices(training_data.size());
+        std::iota(indices.begin(), indices.end(), 0);
+
         for (int epoch = 0; epoch < epochs; epoch++) {
 
             int no_examples = training_data.size();
+            std::shuffle(indices.begin(), indices.end(), std::mt19937(std::random_device()()));
 
             for (int i=0; i<no_examples; i+=batch_size) {
                 // create batch
                 size_t batch_start = i;
                 size_t batch_end = std::min(i + batch_size, no_examples);
-                std::vector<TrainingExample> batch(training_data.begin() + batch_start, training_data.begin() + batch_end);
+                std::vector<size_t> batch_indices(indices.begin() + batch_start, indices.begin() + batch_end);
 
                 std::vector<GRUGradients> accumulated_gru_gradients;
                 std::vector<Matrix> accumulated_output_weights_gradients;
@@ -818,7 +823,8 @@ class Predictor {
                 accumulated_output_weights_gradients.reserve(batch_end - batch_start);
                 accumulated_output_bias_gradients.reserve(batch_end - batch_start);
 
-                for (const auto& example : batch) {
+                for (const auto index : batch_indices) {
+                    auto example = training_data[index];
                     auto [gru_gradients, output_gradients] = compute_gradients(example.sequence, example.target);
                     auto [dW_out, db_out] = output_gradients;
                     accumulated_gru_gradients.push_back(gru_gradients);
@@ -1025,7 +1031,7 @@ std::vector<TrainingExample> load_stock_data(const std::string& filename, size_t
 int main() {
     // setup for sine wave prediction
     size_t input_features = 8;  // just the sine value
-    size_t hidden_size = 32;
+    size_t hidden_size = 64;
     size_t output_size = 1;  // predicted next value
 
     // learning rate is for the linear layer, not the optimiser.
@@ -1033,7 +1039,7 @@ int main() {
     predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
 
     // generate training data
-    auto stock_data = load_stock_data("stock_data/AAPL_data.csv", 30);
+    auto stock_data = load_stock_data("stock_data/AAPL_data.csv", 14);
     // todo normalise data
     std::shuffle(stock_data.begin(), stock_data.end(), std::mt19937(std::random_device()()));
 
