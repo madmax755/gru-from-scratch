@@ -1,5 +1,5 @@
 import yfinance as yf
-import requests
+import numpy as np
 import pandas as pd
 from typing import Dict, Any
 from dotenv import load_dotenv
@@ -83,10 +83,19 @@ def select_features(df, features):
     return df[features]
 
 if __name__ == "__main__":
-    symbol = "AAPL"
-    start_date = "2020-01-01"
-    end_date = "2024-10-27"
+    # symbol = "AAPL"
+    # start_date = "2020-01-01"
+    # end_date = "2024-10-27"
     
-    data = compute_indicators(fetch_yahoo_finance_data(symbol, start_date, end_date)).dropna()
-    data = select_features(data, ['Return', 'Volume_Return', 'Day_Volatility', 'RSI', 'MACD', 'BB_Middle', 'BB_Upper', 'BB_Lower'])
-    data.to_csv(f"GRU/stock_data/{symbol}_data.csv")
+    # data = compute_indicators(fetch_yahoo_finance_data(symbol, start_date, end_date)).dropna()
+    # data = select_features(data, ['Return', 'Volume_Return', 'Day_Volatility', 'RSI', 'MACD', 'BB_Middle', 'BB_Upper', 'BB_Lower'])
+    # data.to_csv(f"GRU/stock_data/{symbol}_data.csv")
+
+    df = pd.read_csv("GRU/stock_data/AAPL_data.csv")
+    df['Return'] = np.log(1+df['Return'])
+    df['Volume_Return'] = np.log(1+df['Volume_Return'])
+    df['Day_Volatility'] = np.log(1+df['Day_Volatility'])
+    df['RSI_normalised'] = (df['RSI'] - df['RSI'].mean())/df['RSI'].std()
+    df['MACD_normalised'] = (df['MACD'] - df['MACD'].mean())/df['MACD'].std()
+    df.drop(columns=['RSI', 'MACD', 'BB_Middle', 'BB_Upper', 'BB_Lower', 'Date'], inplace=True)
+    df.to_csv("GRU/stock_data/AAPL_data_log.csv")

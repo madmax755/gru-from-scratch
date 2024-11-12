@@ -937,7 +937,7 @@ std::vector<TrainingExample> generate_sine_training_data(int num_samples, int se
     return training_data;
 }
 
-std::vector<TrainingExample> load_stock_data(const std::string& filename, size_t sequence_length = 20) {
+std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::string& filename, size_t sequence_length = 20) {
     std::vector<TrainingExample> training_data;
     std::ifstream file(filename);
     std::string line;
@@ -946,107 +946,95 @@ std::vector<TrainingExample> load_stock_data(const std::string& filename, size_t
         throw std::runtime_error("failed to open file: " + filename);
     }
     
-    // skip header if exists
+    // read header to determine number of features
     std::getline(file, line);
-    
-    // read first line to infer number of features
-    std::getline(file, line);
-    std::stringstream test_ss(line);
-    std::string value;
+    std::stringstream header_ss(line);
+    std::string header_value;
     size_t n_features = 0;
-    
-    // skip date
-    std::getline(test_ss, value, ',');
-    
-    // count remaining columns
-    while (std::getline(test_ss, value, ',')) {
-        n_features++;
+    while (std::getline(header_ss, header_value, ',')) {
+        if (!header_value.empty()) {
+            n_features++;
+        }
     }
     
-    // reset file position to start (after header)
-    file.clear();
-    file.seekg(0);
-    std::getline(file, line);  // skip header again
+    if (n_features == 0) {
+        throw std::runtime_error("no features found in header");
+    }
     
-    // temporary storage for building sequences
-    std::vector<std::vector<double>> temp_sequence;
-    
-    // read each line
+    // read all lines into temporary storage
+    std::vector<std::vector<double>> all_data;
     while (std::getline(file, line)) {
+        if (line.empty()) continue;
+        
         std::stringstream ss(line);
-        
-        // skip date
-        std::getline(ss, value, ',');
-        
-        // read features
+        std::string value;
         std::vector<double> features;
-        while (std::getline(ss, value, ',') && features.size() < n_features) {
+        
+        while (std::getline(ss, value, ',')) {
             try {
-                features.push_back(std::stod(value));
+                if (!value.empty()) {
+                    features.push_back(std::stod(value));
+                }
             } catch (const std::invalid_argument& e) {
                 std::cerr << "warning: invalid number format in line: " << line << std::endl;
                 continue;
             }
         }
         
-        // ensure we got all features
-        if (features.size() != n_features) {
-            std::cerr << "warning: incorrect number of features in line: " << line << std::endl;
-            continue;
+        if (features.size() == n_features) {
+            all_data.push_back(features);
+        } else {
+            std::cerr << "warning: incorrect number of features (" << features.size() 
+                      << "/" << n_features << ") in line: " << line << std::endl;
         }
+    }
+    
+    // create sequences
+    for (size_t i = 0; i + sequence_length < all_data.size(); i++) {
+        TrainingExample example;
         
-        temp_sequence.push_back(features);
-        
-        // once we have enough data for a sequence
-        if (temp_sequence.size() >= sequence_length + 1) {  // +1 for target
-            TrainingExample example;
-            
-            // create sequence from all but last entry
-            for (size_t i = 0; i < sequence_length; i++) {
-                Matrix input(n_features, 1);
-                for (size_t f = 0; f < n_features; f++) {
-                    input.data[f][0] = temp_sequence[i][f];
-                }
-                example.sequence.push_back(input);
+        // create sequence using all features
+        for (size_t j = 0; j < sequence_length; j++) {
+            Matrix input(n_features, 1);
+            for (size_t f = 0; f < n_features; f++) {
+                input.data[f][0] = all_data[i + j][f];
             }
-            
-            // use returns from last entry as target
-            example.target = Matrix(1, 1);
-            example.target.data[0][0] = temp_sequence[sequence_length][0];  // returns column
-            
-            training_data.push_back(example);
-            
-            // remove oldest entry to slide window
-            temp_sequence.erase(temp_sequence.begin());
+            example.sequence.push_back(input);
         }
+        
+        // use next Return (first column) as target
+        example.target = Matrix(1, 1);
+        example.target.data[0][0] = all_data[i + sequence_length][0];
+        
+        training_data.push_back(example);
     }
     
     if (training_data.empty()) {
         throw std::runtime_error("no valid training examples could be created from file");
     }
     
-    return training_data;
+    return {training_data, n_features};
 }
 
 int main() {
-    // setup for sine wave prediction
-    size_t input_features = 8;  // just the sine value
-    size_t hidden_size = 64;
-    size_t output_size = 1;  // predicted next value
-
-    // learning rate is for the linear layer, not the optimiser.
-    Predictor predictor(input_features, hidden_size, output_size, 0.01);
-    predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
+    
 
     // generate training data
-    auto stock_data = load_stock_data("stock_data/AAPL_data.csv", 14);
-    // todo normalise data
+    auto [stock_data, n_features] = load_stock_data("stock_data/AAPL_data_normalised.csv", 14);
     std::shuffle(stock_data.begin(), stock_data.end(), std::mt19937(std::random_device()()));
 
     // split data into training and test sets
     size_t split_point = static_cast<size_t>(stock_data.size() * 0.8);
     auto training_data = std::vector<TrainingExample>(stock_data.begin(), stock_data.begin() + split_point);
     auto test_data = std::vector<TrainingExample>(stock_data.begin() + split_point, stock_data.end());
+
+    size_t input_features = n_features;
+    size_t hidden_size = 64;    
+    size_t output_size = 1;
+
+    // learning rate is for the linear layer, not the optimiser.
+    Predictor predictor(input_features, hidden_size, output_size, 0.01);
+    predictor.set_optimiser(std::make_unique<AdamWOptimiser>());
 
     predictor.train(training_data, test_data, 50, 50);
 
