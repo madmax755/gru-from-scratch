@@ -272,8 +272,6 @@ class Matrix {
     }
 };
 
-
-
 struct TrainingExample {
     std::vector<Matrix> sequence;
     Matrix target;
@@ -301,7 +299,7 @@ struct GRUGradients {
           db_h(hidden_size, 1),
           input_size(input_size),
           hidden_size(hidden_size) {}
-    
+
     // operator overloading for addition
     GRUGradients operator+(const GRUGradients& other) const {
         if (input_size != other.input_size or hidden_size != other.hidden_size) {
@@ -778,7 +776,8 @@ class Predictor {
     }
 
     // gets the gradients for a single training example
-    std::pair<GRUGradients, std::pair<Matrix, Matrix>> compute_gradients(const std::vector<Matrix>& input_sequence, const Matrix& target) {
+    std::pair<GRUGradients, std::pair<Matrix, Matrix>> compute_gradients(const std::vector<Matrix>& input_sequence,
+                                                                         const Matrix& target) {
         // forward pass
         Matrix prediction = predict(input_sequence);
         Matrix last_hidden_state = gru.get_last_hidden_state();
@@ -799,18 +798,17 @@ class Predictor {
         return std::pair<GRUGradients, std::pair<Matrix, Matrix>>(gru_gradients, {dW_out, db_out});
     }
 
-    void train(const std::vector<TrainingExample>& training_data, const std::vector<TrainingExample>& test_data, int epochs, int batch_size = 1) {
-
+    void train(const std::vector<TrainingExample>& training_data, const std::vector<TrainingExample>& test_data, int epochs,
+               int batch_size = 1) {
         // create a vector of indices
         std::vector<size_t> indices(training_data.size());
         std::iota(indices.begin(), indices.end(), 0);
 
         for (int epoch = 0; epoch < epochs; epoch++) {
-
             int no_examples = training_data.size();
             std::shuffle(indices.begin(), indices.end(), std::mt19937(std::random_device()()));
 
-            for (int i=0; i<no_examples; i+=batch_size) {
+            for (int i = 0; i < no_examples; i += batch_size) {
                 // create batch
                 size_t batch_start = i;
                 size_t batch_end = std::min(i + batch_size, no_examples);
@@ -836,15 +834,15 @@ class Predictor {
                 GRUGradients averaged_gru_gradients(input_size, hidden_size);
                 Matrix averaged_output_weights_gradients(output_size, hidden_size);
                 Matrix averaged_output_bias_gradients(1, output_size);
-                for (int i=0; i<batch_end - batch_start; i++) {
+                for (int i = 0; i < batch_end - batch_start; i++) {
                     averaged_gru_gradients = averaged_gru_gradients + accumulated_gru_gradients[i];
-                    averaged_output_weights_gradients = averaged_output_weights_gradients + accumulated_output_weights_gradients[i];
+                    averaged_output_weights_gradients =
+                        averaged_output_weights_gradients + accumulated_output_weights_gradients[i];
                     averaged_output_bias_gradients = averaged_output_bias_gradients + accumulated_output_bias_gradients[i];
                 }
                 averaged_gru_gradients = averaged_gru_gradients * (1.0 / (batch_end - batch_start));
                 averaged_output_weights_gradients = averaged_output_weights_gradients * (1.0 / (batch_end - batch_start));
                 averaged_output_bias_gradients = averaged_output_bias_gradients * (1.0 / (batch_end - batch_start));
-
 
                 // update GRU parameters using optimiser once batch gradients are averaged
                 update_parameters(averaged_gru_gradients);
@@ -854,7 +852,7 @@ class Predictor {
                 W_out = W_out - averaged_output_weights_gradients * learning_rate;
                 b_out = b_out - averaged_output_bias_gradients * learning_rate;
 
-                std::cout << "\rBatch " << i/batch_size << "/" << no_examples/batch_size << " complete" << std::flush;
+                std::cout << "\rBatch " << i / batch_size << "/" << no_examples / batch_size << " complete" << std::flush;
             }
             std::cout << "\rEpoch " << epoch << "/" << epochs << " complete" << std::endl;
             auto test_metrics = evaluate(test_data);
@@ -867,43 +865,97 @@ class Predictor {
         double mse;
         double mae;
         double rmse;
+        double profit_loss;
+        double accuracy;
+        int total_trades;
+        double avg_trade_return;  // added: average return per trade
 
         friend std::ostream& operator<<(std::ostream& os, const EvaluationMetrics& metrics) {
             os << "----------------\n"
                << "MSE: " << metrics.mse << "\n"
                << "MAE: " << metrics.mae << "\n"
                << "RMSE: " << metrics.rmse << "\n"
+               << "Profit/Loss: " << (metrics.profit_loss * 100) << "%\n"
+               << "Direction Accuracy: " << (metrics.accuracy * 100) << "%\n"
+               << "Total Trades: " << metrics.total_trades << "\n"
+               << "Avg Trade Return: " << (metrics.avg_trade_return * 100) << "%\n"
                << "----------------";
             return os;
         }
     };
 
     EvaluationMetrics evaluate(const std::vector<TrainingExample>& test_data) {
-        double total_loss = 0.0;
         double total_squared_error = 0.0;
         double total_absolute_error = 0.0;
         size_t total_examples = test_data.size();
 
+        // trading metrics
+        double portfolio_value = 1.0;
+        double peak_value = 1.0;
+        double max_drawdown = 0.0;
+        int correct_predictions = 0;
+        int total_trades = 0;
+
+        std::vector<double> trade_returns;
+        const double max_position_size = 0.2;  // maximum 20% of portfolio per trade
+
         for (const auto& example : test_data) {
-            // get prediction
             Matrix prediction = predict(example.sequence);
-            
-            // compute errors
-            double error = prediction.data[0][0] - example.target.data[0][0];
+            double predicted_return = prediction.data[0][0];
+            double actual_return = example.target.data[0][0];
+
+            // compute errors for traditional metrics
+            double error = predicted_return - actual_return;
             total_squared_error += error * error;
             total_absolute_error += std::abs(error);
-            total_loss += error * error;  // MSE loss
+
+            // trading simulation with proportional betting
+            if (std::abs(predicted_return) > 0.0001) {  // minimum threshold for trading
+                total_trades++;
+
+                // calculate position size based on prediction confidence
+                double confidence = std::abs(predicted_return);
+                double position_size = std::min(confidence, max_position_size);
+
+                // check prediction direction
+                if ((predicted_return > 0 && actual_return > 0) || (predicted_return < 0 && actual_return < 0)) {
+                    correct_predictions++;
+                }
+
+                // simulate trade with position sizing
+                double trade_return;
+                if (predicted_return > 0) {
+                    // long position
+                    trade_return = position_size * actual_return;
+                } else {
+                    // short position
+                    trade_return = position_size * (-actual_return);
+                }
+
+                // update portfolio value
+                portfolio_value *= (1.0 + trade_return);
+                trade_returns.push_back(trade_return);
+
+            }
         }
 
-        // compute average metrics
+        // compute basic metrics
         double mse = total_squared_error / total_examples;
         double mae = total_absolute_error / total_examples;
         double rmse = std::sqrt(mse);
+        double accuracy = total_trades > 0 ? static_cast<double>(correct_predictions) / total_trades : 0.0;
+        double profit_loss = portfolio_value - 1.0;
 
-        return {mse, mae, rmse};
+        // compute average trade return
+        double avg_trade_return = 0.0;
+        if (!trade_returns.empty()) {
+            avg_trade_return = std::accumulate(trade_returns.begin(), trade_returns.end(), 0.0) / trade_returns.size();
+        }
+
+
+        return {mse, mae, rmse, profit_loss, accuracy, total_trades,  avg_trade_return};
     }
 };
-
 
 std::vector<TrainingExample> generate_sine_training_data(int num_samples, int sequence_length, double sampling_frequency = 0.1) {
     std::vector<TrainingExample> training_data;
@@ -941,11 +993,11 @@ std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::strin
     std::vector<TrainingExample> training_data;
     std::ifstream file(filename);
     std::string line;
-    
+
     if (!file.is_open()) {
         throw std::runtime_error("failed to open file: " + filename);
     }
-    
+
     // read header to determine number of features
     std::getline(file, line);
     std::stringstream header_ss(line);
@@ -956,20 +1008,20 @@ std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::strin
             n_features++;
         }
     }
-    
+
     if (n_features == 0) {
         throw std::runtime_error("no features found in header");
     }
-    
+
     // read all lines into temporary storage
     std::vector<std::vector<double>> all_data;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
-        
+
         std::stringstream ss(line);
         std::string value;
         std::vector<double> features;
-        
+
         while (std::getline(ss, value, ',')) {
             try {
                 if (!value.empty()) {
@@ -980,19 +1032,19 @@ std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::strin
                 continue;
             }
         }
-        
+
         if (features.size() == n_features) {
             all_data.push_back(features);
         } else {
-            std::cerr << "warning: incorrect number of features (" << features.size() 
-                      << "/" << n_features << ") in line: " << line << std::endl;
+            std::cerr << "warning: incorrect number of features (" << features.size() << "/" << n_features
+                      << ") in line: " << line << std::endl;
         }
     }
-    
+
     // create sequences
     for (size_t i = 0; i + sequence_length < all_data.size(); i++) {
         TrainingExample example;
-        
+
         // create sequence using all features
         for (size_t j = 0; j < sequence_length; j++) {
             Matrix input(n_features, 1);
@@ -1001,24 +1053,22 @@ std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::strin
             }
             example.sequence.push_back(input);
         }
-        
+
         // use next Return (first column) as target
         example.target = Matrix(1, 1);
         example.target.data[0][0] = all_data[i + sequence_length][0];
-        
+
         training_data.push_back(example);
     }
-    
+
     if (training_data.empty()) {
         throw std::runtime_error("no valid training examples could be created from file");
     }
-    
+
     return {training_data, n_features};
 }
 
 int main() {
-    
-
     // generate training data
     auto [stock_data, n_features] = load_stock_data("stock_data/AAPL_data_normalised.csv", 14);
     std::shuffle(stock_data.begin(), stock_data.end(), std::mt19937(std::random_device()()));
@@ -1029,7 +1079,7 @@ int main() {
     auto test_data = std::vector<TrainingExample>(stock_data.begin() + split_point, stock_data.end());
 
     size_t input_features = n_features;
-    size_t hidden_size = 64;    
+    size_t hidden_size = 64;
     size_t output_size = 1;
 
     // learning rate is for the linear layer, not the optimiser.
@@ -1042,7 +1092,6 @@ int main() {
     std::cout << "\nSample predictions:" << std::endl;
     for (size_t i = 0; i < std::min(size_t(10), test_data.size()); i++) {
         Matrix prediction = predictor.predict(test_data[i].sequence);
-        std::cout << "Predicted: " << prediction.data[0][0] 
-                  << " Actual: " << test_data[i].target.data[0][0] << std::endl;
+        std::cout << "Predicted: " << prediction.data[0][0] << " Actual: " << test_data[i].target.data[0][0] << std::endl;
     }
 }
