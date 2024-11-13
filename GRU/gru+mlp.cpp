@@ -1297,9 +1297,9 @@ class Predictor {
     std::unique_ptr<Loss> loss;
 
    public:
-    Predictor(size_t input_size, size_t hidden_size, size_t output_size, std::vector<int> mlp_topology)
+    Predictor(size_t input_size, size_t hidden_size, size_t output_size, std::vector<int> mlp_topology, std::vector<std::string> mlp_activation_functions = {})
         : gru(input_size, hidden_size),
-          mlp(mlp_topology),
+          mlp(mlp_topology, mlp_activation_functions),
           input_size(input_size),
           hidden_size(hidden_size),
           output_size(output_size) {}
@@ -1470,7 +1470,7 @@ class Predictor {
             total_absolute_error += std::abs(error);
 
             // trading simulation with proportional betting
-            if (std::abs(predicted_return) > 0.0001) {  // minimum threshold for trading
+            if (std::abs(predicted_return) > 0.01) {  // minimum threshold for trading
                 total_trades++;
 
                 // calculate position size based on prediction confidence
@@ -1628,7 +1628,7 @@ std::pair<std::vector<TrainingExample>, size_t> load_stock_data(const std::strin
 
 int main() {
     // generate training data
-    auto [stock_data, n_features] = load_stock_data("stock_data/AAPL_data_normalised.csv", 14);
+    auto [stock_data, n_features] = load_stock_data("stock_data/AAPL_data_normalised.csv", 100);
     std::shuffle(stock_data.begin(), stock_data.end(), std::mt19937(std::random_device()()));
 
     // split data into training and test sets
@@ -1637,17 +1637,18 @@ int main() {
     auto test_data = std::vector<TrainingExample>(stock_data.begin() + split_point, stock_data.end());
 
     size_t input_features = n_features;
-    size_t hidden_size = 64;
+    size_t hidden_size = 128;
     size_t output_size = 1;
     std::vector<int> mlp_topology = {static_cast<int>(hidden_size), 32, static_cast<int>(output_size)};
+    std::vector<std::string> mlp_activation_functions = {"sigmoid", "sigmoid", "none"};
 
-    // learning rate is for the linear layer, not the optimiser.
+
     Predictor predictor(input_features, hidden_size, output_size, mlp_topology);
     predictor.set_gru_optimiser(std::make_unique<GRUAdamWOptimiser>());
     predictor.set_mlp_optimiser(std::make_unique<MLPAdamWOptimiser>());
     predictor.set_loss(std::make_unique<MSELoss>());
 
-    predictor.train(training_data, test_data, 50, 50);
+    predictor.train(training_data, test_data, 75, 50);
 
     // print some example predictions
     std::cout << "\nSample predictions:" << std::endl;
